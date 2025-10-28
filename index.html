@@ -34,14 +34,14 @@
       <button id="screenshot">Screenshot</button>
     </div>
   </div>
-  <div id="note">Tip: Put your Mac’s WhatsApp call on speakers so the iPhone mic hears it. Turn <b>AR Anchor</b> on to track a printed image (requires <code>targets.mind</code> next to this file). If you also add <code>target.jpg</code> next to it, a small preview of what to scan will appear.</div>
+  <div id="note">Tip: Put your Mac’s WhatsApp call on speakers so the iPhone mic hears it. Turn <b>AR Anchor</b> on to track a printed image (requires <code>targets.mind</code> next to this file). If you also add <code>target.png</code> next to it, a small preview of what to scan will appear.</div>
   <div id="preview"><img id="previewImg" alt="target preview"><span>Scan this</span></div>
 
   <script>
     // ---------- CONFIG ----------
     const USE_GLB_MODEL = false;                 // set true to load your own GLB
     const MODEL_URL = 'model.glb';               // GLB must be CORS-accessible
-    const IMAGE_TARGET_SRC = 'targets.mind'; // must be generated from the SAME image you will scan (e.g., target.jpg)     // MindAR target file
+    const IMAGE_TARGET_SRC = 'targets.mind'; // must be generated from the SAME image you will scan (e.g., target.png)     // MindAR target file
 
     // Audio envelope parameters (smoother speech motion)
     const ATTACK = 0.25;   // 0..1 higher = snappier open
@@ -58,7 +58,7 @@
 
     async function initScene(){
       // try-load a local preview image (optional)
-      (async ()=>{ try{ const r = await fetch('target.jpg', {method:'HEAD'}); if(r.ok){ const p=document.getElementById('preview'); const im=document.getElementById('previewImg'); im.src='target.jpg'; p.style.display='block'; } }catch(e){} })();
+      (async ()=>{ try{ const r = await fetch('target.png', {method:'HEAD'}); if(r.ok){ const p=document.getElementById('preview'); const im=document.getElementById('previewImg'); im.src='target.png'; p.style.display='block'; } }catch(e){} })();
       clock = new THREE.Clock();
       if(usingAnchor){
         mindarThree = new window.MINDAR.IMAGE.MindARThree({
