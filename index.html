@@ -17,10 +17,12 @@
       #preview{position:fixed;right:10px;bottom:10px;width:120px;height:auto;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.5);background:#111;padding:6px;display:none}
     #preview img{width:108px;height:auto;display:block;border-radius:6px}
     #preview span{display:block;color:#fff;font:12px system-ui;margin-top:6px;text-align:center;opacity:.9}
+      #status{position:fixed;left:50%;top:12px;transform:translateX(-50%);background:rgba(0,0,0,.55);color:#fff;padding:6px 10px;border-radius:10px;font:13px system-ui;backdrop-filter:blur(6px)}
   </style>
 </head>
 <body>
   <video id="bg" playsinline autoplay muted></video>
+  <div id="status" style="display:none">Looking for image target…</div>
   <div id="hud">
     <div class="row">
       <button id="start">Start</button>
@@ -73,11 +75,11 @@
         anchor = ctx.addAnchor(0);
         // ensure hidden until target is detected
         anchor.group.visible = false;
-        anchor.onTargetFound = () => { anchor.group.visible = true; };
-        anchor.onTargetLost  = () => { anchor.group.visible = false; };
+        anchor.onTargetFound = () => { anchor.group.visible = true; const s=document.getElementById('status'); if(s) { s.textContent='Tracking target'; s.style.display='block'; } };
+        anchor.onTargetLost  = () => { anchor.group.visible = false; const s=document.getElementById('status'); if(s) { s.textContent='Looking for image target…'; s.style.display='block'; } };
 
         // hide background <video> because MindAR renders its own camera feed
-        document.getElementById('bg').style.display = 'none';
+        
       } else {
         renderer = new THREE.WebGLRenderer({alpha:true, antialias:true});
         renderer.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
@@ -162,11 +164,19 @@
     async function setupMedia(){
       // Camera background (non-anchored mode only)
       const cam = document.getElementById('bg');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' } },
-        audio: micMode.value === 'mic' ? { echoCancellation:true, noiseSuppression:true } : false
-      });
-      if(!usingAnchor){ cam.srcObject = stream; }
+      let stream;
+      if(usingAnchor){
+        // MindAR handles the camera feed. Only request audio if needed.
+        if(micMode.value === 'mic'){
+          stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true } });
+        }
+      } else {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: micMode.value === 'mic' ? { echoCancellation:true, noiseSuppression:true } : false
+        });
+        cam.srcObject = stream;
+      }
 
       if(micMode.value === 'mic'){
         audioCtx = new (window.AudioContext||window.webkitAudioContext)();
