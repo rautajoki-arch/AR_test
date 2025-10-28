@@ -14,6 +14,9 @@
     #hud .row{display:flex;gap:8px;align-items:center}
     button,select{background:#1f6feb;color:#fff;border:0;border-radius:12px;padding:8px 12px}
     #note{position:fixed;left:0;right:0;bottom:0;color:#fff;padding:10px 14px;font:13px system-ui;background:linear-gradient(0deg,rgba(0,0,0,.6),transparent)}
+      #preview{position:fixed;right:10px;bottom:10px;width:120px;height:auto;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.5);background:#111;padding:6px;display:none}
+    #preview img{width:108px;height:auto;display:block;border-radius:6px}
+    #preview span{display:block;color:#fff;font:12px system-ui;margin-top:6px;text-align:center;opacity:.9}
   </style>
 </head>
 <body>
@@ -31,13 +34,14 @@
       <button id="screenshot">Screenshot</button>
     </div>
   </div>
-  <div id="note">Tip: Put your Mac’s WhatsApp call on speakers so the iPhone mic hears it. Turn <b>AR Anchor</b> on to track a printed image (requires <code>targets.mind</code> hosted next to this file). The model now <b>only appears when the image is recognized</b>.</div>
+  <div id="note">Tip: Put your Mac’s WhatsApp call on speakers so the iPhone mic hears it. Turn <b>AR Anchor</b> on to track a printed image (requires <code>targets.mind</code> next to this file). If you also add <code>target.jpg</code> next to it, a small preview of what to scan will appear.</div>
+  <div id="preview"><img id="previewImg" alt="target preview"><span>Scan this</span></div>
 
   <script>
     // ---------- CONFIG ----------
     const USE_GLB_MODEL = false;                 // set true to load your own GLB
     const MODEL_URL = 'model.glb';               // GLB must be CORS-accessible
-    const IMAGE_TARGET_SRC = 'targets.mind';     // MindAR target file
+    const IMAGE_TARGET_SRC = 'targets.mind'; // must be generated from the SAME image you will scan (e.g., target.jpg)     // MindAR target file
 
     // Audio envelope parameters (smoother speech motion)
     const ATTACK = 0.25;   // 0..1 higher = snappier open
@@ -53,6 +57,8 @@
     const micMode = document.getElementById('micMode');
 
     async function initScene(){
+      // try-load a local preview image (optional)
+      (async ()=>{ try{ const r = await fetch('target.jpg', {method:'HEAD'}); if(r.ok){ const p=document.getElementById('preview'); const im=document.getElementById('previewImg'); im.src='target.jpg'; p.style.display='block'; } }catch(e){} })();
       clock = new THREE.Clock();
       if(usingAnchor){
         mindarThree = new window.MINDAR.IMAGE.MindARThree({
@@ -196,6 +202,7 @@
       // If anchoring is on but target file is missing, disable anchoring
       if(usingAnchor){
         const ok = await fetch(IMAGE_TARGET_SRC, {method:'HEAD'}).then(r=>r.ok).catch(()=>false);
+        if(!ok){ console.warn('targets.mind not found next to index.html'); }
         if(!ok){ usingAnchor=false; anchorBtn.textContent='AR Anchor: Off'; }
       }
 
