@@ -3,30 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>Audio‑reactive AR Head (anchored + non‑mirrored)</title>
+  <title>AR Head — Clean v3 (MindAR camera, shows only on detect)</title>
   <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
   <script src="https://unpkg.com/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
   <script src="https://unpkg.com/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
   <style>
     html,body{height:100%;margin:0;background:#000;overflow:hidden}
-    #bg{position:fixed;inset:0;width:100%;height:100%;object-fit:cover} /* no mirror */
-    #hud{position:fixed;left:0;right:0;top:0;display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px;color:#fff;font:14px system-ui;background:linear-gradient(180deg,rgba(0,0,0,.6),transparent)}
+    #hud{position:fixed;left:0;right:0;top:0;display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px;color:#fff;font:14px system-ui;background:linear-gradient(180deg,rgba(0,0,0,.55),transparent);z-index:10}
     #hud .row{display:flex;gap:8px;align-items:center}
     button,select{background:#1f6feb;color:#fff;border:0;border-radius:12px;padding:8px 12px}
-    #note{position:fixed;left:0;right:0;bottom:0;color:#fff;padding:10px 14px;font:13px system-ui;background:linear-gradient(0deg,rgba(0,0,0,.6),transparent)}
-      #preview{position:fixed;right:10px;bottom:10px;width:120px;height:auto;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.5);background:#111;padding:6px;display:none}
+    #status{position:fixed;left:50%;top:50px;transform:translateX(-50%);background:rgba(0,0,0,.55);color:#fff;padding:6px 10px;border-radius:10px;font:13px system-ui;backdrop-filter:blur(6px);z-index:10;display:none}
+    #preview{position:fixed;right:10px;bottom:10px;width:120px;height:auto;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.5);background:#111;padding:6px;display:none;z-index:10}
     #preview img{width:108px;height:auto;display:block;border-radius:6px}
     #preview span{display:block;color:#fff;font:12px system-ui;margin-top:6px;text-align:center;opacity:.9}
-      #status{position:fixed;left:50%;top:12px;transform:translateX(-50%);background:rgba(0,0,0,.55);color:#fff;padding:6px 10px;border-radius:10px;font:13px system-ui;backdrop-filter:blur(6px)}
   </style>
 </head>
 <body>
-  <video id="bg" playsinline autoplay muted></video>
-  <div id="status" style="display:none">Looking for image target…</div>
   <div id="hud">
     <div class="row">
       <button id="start">Start</button>
-      <button id="anchorToggle">AR Anchor: Off</button>
+      <span>AR Anchor: <b>On</b></span>
       <select id="micMode">
         <option value="mic">Mic (use iPhone mic)</option>
         <option value="none">No audio</option>
@@ -36,73 +32,59 @@
       <button id="screenshot">Screenshot</button>
     </div>
   </div>
-  <div id="note">Tip: Put your Mac’s WhatsApp call on speakers so the iPhone mic hears it. Turn <b>AR Anchor</b> on to track a printed image (requires <code>targets.mind</code> next to this file). If you also add <code>target.png</code> next to it, a small preview of what to scan will appear.</div>
+  <div id="status">Looking for image target…</div>
   <div id="preview"><img id="previewImg" alt="target preview"><span>Scan this</span></div>
 
   <script>
-    // ---------- CONFIG ----------
-    const USE_GLB_MODEL = false;                 // set true to load your own GLB
-    const MODEL_URL = 'model.glb';               // GLB must be CORS-accessible
-    const IMAGE_TARGET_SRC = 'targets.mind'; // must be generated from the SAME image you will scan (e.g., target.png)     // MindAR target file
+    // -------- CONFIG --------
+    const IMAGE_TARGET_SRC = 'targets.mind'; // must be generated from the SAME image you will scan (target.png/jpg)
+    const USE_GLB_MODEL = false;             // set true to load your own GLB
+    const MODEL_URL = 'model.glb';           // if USE_GLB_MODEL=true, host this next to index.html (CORS ok)
 
-    // Audio envelope parameters (smoother speech motion)
-    const ATTACK = 0.25;   // 0..1 higher = snappier open
-    const RELEASE = 0.1;   // 0..1 higher = faster close
+    // Audio envelope parameters
+    const ATTACK = 0.25;   // 0..1 higher = faster opening
+    const RELEASE = 0.10;  // 0..1 higher = faster closing
 
-    // ---------- Globals ----------
-    let started=false, renderer, scene, camera, head, jawPivot, eyes=[], mixer=null, clock;
-    let audioCtx, analyser, gainNode, sourceNode, filterBank, bandEnv=[0,0,0], env=0;
-    let usingAnchor=false, mindarThree=null, anchor=null; // toggled AR anchoring
+    // -------- Globals --------
+    let started=false, mindarThree=null, renderer, scene, camera, anchor;
+    let head, jawPivot, eyes=[]; let mixer=null; const clock = new THREE.Clock();
+    let audioCtx=null, filterBank=[], bandEnv=[0,0,0], env=0;
 
     const startBtn = document.getElementById('start');
-    const anchorBtn = document.getElementById('anchorToggle');
-    const micMode = document.getElementById('micMode');
+    const micMode  = document.getElementById('micMode');
 
-    async function initScene(){
-      // try-load a local preview image (optional)
-      (async ()=>{ try{ const r = await fetch('target.png', {method:'HEAD'}); if(r.ok){ const p=document.getElementById('preview'); const im=document.getElementById('previewImg'); im.src='target.png'; p.style.display='block'; } }catch(e){} })();
-      clock = new THREE.Clock();
-      if(usingAnchor){
-        mindarThree = new window.MINDAR.IMAGE.MindARThree({
-          container: document.body,
-          imageTargetSrc: IMAGE_TARGET_SRC,
-          uiLoading: true,
-          uiScanning: true,
-        });
-        const ctx = mindarThree;
-        renderer = ctx.renderer; scene = ctx.scene; camera = ctx.camera;
+    // Preview of the expected target (optional)
+    (async ()=>{
+      const show = (url)=>{ const p=document.getElementById('preview'); const im=document.getElementById('previewImg'); im.src=url; p.style.display='block'; };
+      try{
+        let ok = await fetch('target.png', {method:'HEAD'}); if(ok.ok) return show('target.png');
+        ok = await fetch('target.jpg', {method:'HEAD'});     if(ok.ok) return show('target.jpg');
+      }catch(e){}
+    })();
 
-        // Hide the HTML <video> in AR mode so MindAR's camera feed is visible
-        const bgEl = document.getElementById('bg'); if(bgEl) bgEl.style.display = 'none';
+    async function initAR(){
+      // Initialize MindAR — it manages the camera feed; no manual getUserMedia for video
+      mindarThree = new window.MINDAR.IMAGE.MindARThree({
+        container: document.body,
+        imageTargetSrc: IMAGE_TARGET_SRC,
+        uiLoading: true,
+        uiScanning: true,
+      });
+      const ctx = mindarThree;
+      renderer = ctx.renderer; scene = ctx.scene; camera = ctx.camera;
 
-        anchor = ctx.addAnchor(0);
-        // ensure hidden until target is detected
-        anchor.group.visible = false;
-        anchor.onTargetFound = () => { anchor.group.visible = true; const s=document.getElementById('status'); if(s) { s.textContent='Tracking target'; s.style.display='block'; } };
-        anchor.onTargetLost  = () => { anchor.group.visible = false; const s=document.getElementById('status'); if(s) { s.textContent='Looking for image target…'; s.style.display='block'; } };
+      // Add a single anchor (first target in targets.mind)
+      anchor = ctx.addAnchor(0);
+      anchor.group.visible = false; // don't show until detected
+      anchor.onTargetFound = () => { anchor.group.visible = true; setStatus('Tracking target'); };
+      anchor.onTargetLost  = () => { anchor.group.visible = false; setStatus('Looking for image target…'); };
 
-        // hide background <video> because MindAR renders its own camera feed
-        
-      } else {
-        renderer = new THREE.WebGLRenderer({alpha:true, antialias:true});
-        renderer.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.domElement.style.position='fixed';
-        renderer.domElement.style.inset='0';
-        document.body.appendChild(renderer.domElement);
-
-        scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.01, 100);
-        camera.position.set(0,0,2.2);
-      }
-
-      // Lights
+      // Scene lighting
       scene.add(new THREE.AmbientLight(0xffffff, 0.7));
       const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(1,2,3); scene.add(dir);
 
-      // Load or build head
-      const containerNode = usingAnchor ? anchor.group : scene;
-
+      // Build or load the head and parent it to the anchor
+      const containerNode = anchor.group;
       if(USE_GLB_MODEL){
         const loader = new THREE.GLTFLoader();
         await new Promise((res,rej)=>{
@@ -115,114 +97,76 @@
         });
       } else {
         const skin = new THREE.MeshStandardMaterial({color:0xffe0c0, roughness:0.6});
-        head = new THREE.Group();
-        containerNode.add(head);
-        const skull = new THREE.Mesh(new THREE.SphereGeometry(0.45, 48, 36), skin);
-        skull.position.y = 0.05; head.add(skull);
+        head = new THREE.Group(); containerNode.add(head);
+        const skull = new THREE.Mesh(new THREE.SphereGeometry(0.45, 48, 36), skin); skull.position.y = 0.05; head.add(skull);
         jawPivot = new THREE.Group(); jawPivot.position.set(0,-0.05,0.23); head.add(jawPivot);
-        const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.28, 0.38), skin);
-        jaw.geometry.translate(0, -0.06, -0.14); jawPivot.add(jaw);
+        const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.28, 0.38), skin); jaw.geometry.translate(0,-0.06,-0.14); jawPivot.add(jaw);
         const eyeMat = new THREE.MeshStandardMaterial({color:0xffffff});
         const irisMat = new THREE.MeshStandardMaterial({color:0x2222ff});
-        const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.06, 20, 16), eyeMat); eyeL.position.set(-0.15,0.12,0.38);
-        const eyeR = eyeL.clone(); eyeR.position.x *= -1; const irisL = new THREE.Mesh(new THREE.SphereGeometry(0.03, 16, 12), irisMat); irisL.position.set(-0.15,0.12,0.41);
-        const irisR = irisL.clone(); irisR.position.x *= -1; head.add(eyeL, eyeR, irisL, irisR); eyes=[irisL, irisR];
+        const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.06,20,16), eyeMat); eyeL.position.set(-0.15,0.12,0.38);
+        const eyeR = eyeL.clone(); eyeR.position.x *= -1;
+        const irisL = new THREE.Mesh(new THREE.SphereGeometry(0.03,16,12), irisMat); irisL.position.set(-0.15,0.12,0.41);
+        const irisR = irisL.clone(); irisR.position.x *= -1;
+        head.add(eyeL, eyeR, irisL, irisR); eyes=[irisL, irisR];
       }
 
-      // Render loop
-      if(usingAnchor){
-        await mindarThree.start();
-        renderer.setAnimationLoop(renderLoop);
-      } else {
-        renderLoop();
-        window.addEventListener('resize', ()=>{
-          camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix();
-          renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-      }
-    }
+      // Start AR immediately — camera feed will be visible even before detection
+      await mindarThree.start();
+      setStatus('Looking for image target…');
 
-    function renderLoop(){
-      const dt = (typeof clock!== 'undefined') ? clock.getDelta() : 0.016;
-      if(mixer) mixer.update(dt);
+      renderer.setAnimationLoop(()=>{
+        const dt = clock.getDelta();
+        if(mixer) mixer.update(dt);
 
-      // update jaw from audio envelope / visemes
-      if(jawPivot){
-        const level = 0.5*bandEnv[0] + 0.8*bandEnv[1] + 0.3*bandEnv[2];
-        const targetOpen = Math.min(0.6, level*1.3);
-        const k = targetOpen > env ? ATTACK : RELEASE; // different speeds opening/closing
-        env = env + (targetOpen - env) * k;
-        jawPivot.rotation.x = env;
-      }
-
-      // tiny idle motion
-      const t = performance.now()*0.001;
-      if(head){ head.rotation.y = Math.sin(t*0.5)*0.12; }
-      eyes.forEach((e,i)=>{ e.position.x += Math.sin(t*0.8 + i)*0.0008; });
-
-      renderer.render(scene, camera);
-      if(!usingAnchor) requestAnimationFrame(renderLoop);
-    }
-
-    async function setupMedia(){
-      // Camera background (non-anchored mode only)
-      const cam = document.getElementById('bg');
-      let stream;
-      if(usingAnchor){
-        // MindAR handles the camera feed. Only request audio if needed.
-        if(micMode.value === 'mic'){
-          stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true } });
+        // Audio-driven jaw motion if present
+        if(jawPivot){
+          const level = 0.5*bandEnv[0] + 0.8*bandEnv[1] + 0.3*bandEnv[2];
+          const targetOpen = Math.min(0.6, level*1.3);
+          const k = targetOpen > env ? ATTACK : RELEASE;
+          env += (targetOpen - env) * k;
+          jawPivot.rotation.x = env;
         }
-      } else {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } },
-          audio: micMode.value === 'mic' ? { echoCancellation:true, noiseSuppression:true } : false
+
+        // Idle motion
+        if(head){ const t = performance.now()*0.001; head.rotation.y = Math.sin(t*0.5)*0.12; eyes.forEach((e,i)=>{ e.position.x += Math.sin(t*0.8 + i)*0.0008; }); }
+        renderer.render(scene, camera);
+      });
+    }
+
+    function setStatus(msg){ const s=document.getElementById('status'); if(!s) return; s.textContent=msg; s.style.display='block'; }
+
+    async function setupAudio(){
+      if(micMode.value !== 'mic') return;
+      // Request MIC ONLY; MindAR already owns the camera stream
+      audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true } });
+      const sourceNode = audioCtx.createMediaStreamSource(stream);
+
+      // 3‑band filter bank for rough visemes
+      const mk = (freq,q)=>{ const f = audioCtx.createBiquadFilter(); f.type='bandpass'; f.frequency.value=freq; f.Q.value=q; return f; };
+      filterBank = [ mk(300,0.8), mk(1000,0.9), mk(3000,1.0) ];
+      filterBank.forEach(f=>{ const an = audioCtx.createAnalyser(); an.fftSize = 512; f.connect(an); f._an = an; sourceNode.connect(f); });
+      const td = [ new Uint8Array(256), new Uint8Array(256), new Uint8Array(256) ];
+      (function audioLoop(){
+        filterBank.forEach((f, i)=>{
+          f._an.getByteTimeDomainData(td[i]);
+          let sum=0; for(let j=0;j<td[i].length;j++){ const v=(td[i][j]-128)/128; sum+=v*v; }
+          const rms = Math.sqrt(sum/td[i].length);
+          bandEnv[i] += (rms - bandEnv[i]) * 0.3;
         });
-        cam.srcObject = stream;
-      }
-
-      if(micMode.value === 'mic'){
-        audioCtx = new (window.AudioContext||window.webkitAudioContext)();
-        sourceNode = audioCtx.createMediaStreamSource(stream);
-        analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 2048;
-
-        // 3‑band filter bank
-        const ctx = audioCtx;
-        const mk = (freq,q)=>{ const f = ctx.createBiquadFilter(); f.type='bandpass'; f.frequency.value=freq; f.Q.value=q; return f; };
-        filterBank = [ mk(300,0.8), mk(1000,0.9), mk(3000,1.0) ];
-        filterBank.forEach(f=>{
-          const an = audioCtx.createAnalyser(); an.fftSize = 512; f.connect(an); f._an = an;
-          sourceNode.connect(f);
-        });
-
-        const td = [ new Uint8Array(256), new Uint8Array(256), new Uint8Array(256) ];
-        (function audioLoop(){
-          filterBank.forEach((f, i)=>{
-            f._an.getByteTimeDomainData(td[i]);
-            let sum=0; for(let j=0;j<td[i].length;j++){ const v=(td[i][j]-128)/128; sum+=v*v; }
-            const rms = Math.sqrt(sum/td[i].length);
-            bandEnv[i] += (rms - bandEnv[i]) * 0.3;
-          });
-          requestAnimationFrame(audioLoop);
-        })();
-      }
+        requestAnimationFrame(audioLoop);
+      })();
     }
 
     async function start(){
-      if(started) return; started = true; startBtn.textContent='Running…';
-      // Show scanning status immediately in AR mode
-      if(usingAnchor){ const s=document.getElementById('status'); if(s){ s.textContent='Looking for image target…'; s.style.display='block'; } }
+      if(started) return; started=true; startBtn.textContent='Running…';
 
-      // If anchoring is on but target file is missing, disable anchoring
-      if(usingAnchor){
-        const ok = await fetch(IMAGE_TARGET_SRC, {method:'HEAD'}).then(r=>r.ok).catch(()=>false);
-        if(!ok){ console.warn('targets.mind not found next to index.html'); }
-        if(!ok){ usingAnchor=false; anchorBtn.textContent='AR Anchor: Off'; }
-      }
+      // Verify targets.mind exists to avoid black screen when misconfigured
+      const ok = await fetch(IMAGE_TARGET_SRC, {method:'HEAD'}).then(r=>r.ok).catch(()=>false);
+      if(!ok){ alert('targets.mind not found next to index.html'); return; }
 
-      await setupMedia();
-      await initScene();
+      await initAR();    // this starts the MindAR camera immediately
+      await setupAudio();
 
       // Screenshot
       document.getElementById('screenshot').addEventListener('click', ()=>{
@@ -233,12 +177,7 @@
       });
     }
 
-    // UI handlers
     document.getElementById('start').addEventListener('click', start);
-    document.getElementById('anchorToggle').addEventListener('click', ()=>{
-      if(started){ alert('Reload the page after toggling anchor.'); return; }
-      usingAnchor = !usingAnchor; anchorBtn.textContent = 'AR Anchor: ' + (usingAnchor?'On':'Off');
-    });
   </script>
 </body>
 </html>
