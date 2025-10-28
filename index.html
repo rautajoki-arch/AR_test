@@ -72,6 +72,9 @@
         const ctx = mindarThree;
         renderer = ctx.renderer; scene = ctx.scene; camera = ctx.camera;
 
+        // Hide the HTML <video> in AR mode so MindAR's camera feed is visible
+        const bgEl = document.getElementById('bg'); if(bgEl) bgEl.style.display = 'none';
+
         anchor = ctx.addAnchor(0);
         // ensure hidden until target is detected
         anchor.group.visible = false;
@@ -208,6 +211,8 @@
 
     async function start(){
       if(started) return; started = true; startBtn.textContent='Running…';
+      // Show scanning status immediately in AR mode
+      if(usingAnchor){ const s=document.getElementById('status'); if(s){ s.textContent='Looking for image target…'; s.style.display='block'; } }
 
       // If anchoring is on but target file is missing, disable anchoring
       if(usingAnchor){
